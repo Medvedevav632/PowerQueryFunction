@@ -2,7 +2,12 @@ let
 
 MyLib1 =[
 	readme = "БИБЛИОТЕКА моих функий 1",
-	Text.ContainsAny = (str, needles) as logical => List.Count(needles)
+	Text.ContainsAny = (str, needles) as logical => List.Count(needles),
+	to = Expression.Evaluate(Text.FromBinary(Binary.Buffer(File.Contents("G:\=EXCEL BI - мои проекты\2024.01 - Анализ Отчетности\2. PQ запросы\fxPackGlobal2.pq"))), #shared)
+],
+
+MyOffice =[
+	readme = "БИБЛИОТЕКА функий по работе с файлами Word"
 ],
 
 UTIL =[ // утилиты 
@@ -49,7 +54,122 @@ UTIL =[ // утилиты
 			NoPrintAreas 	= Table.SelectRows(Expanded, each not Text.Contains([N], "$")),
 			OnlySheets 		= Table.SelectRows(NoPrintAreas, each Text.Contains([K], "Sheet"))
 		in
-			OnlySheets
+			OnlySheets,
+	
+	fxSwitch = // возвращяет парный элемент из списка списков или пары списков
+		/* 	Возвращяет парный элемент из списка
+			Пример:
+				1. 	to = F[fxSwitch]("B", { {"A", 1}, {"B", 2}, {"C", 3} })								// Return: 2
+				2. 	to = F[fxSwitch]("TE", {"QB", "RB", "WR", "TE", "K", "D/ST"}, {1, 2, 3, 4, 5, 6}) 	// Return: 1
+				3. 	to = F[fxSwitch](
+							Date.DayOfWeek(DateTime.From("03/05/24")), // число
+							{0, 1, 2, 3, 4, 5, 6}, 
+							{"Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"}, 
+							null
+						)
+				3. 	to = F[fxSwitch](
+							3, 	// Date.Month(DateTime.From(date))
+							{1,2,3,4,5,6,7,8,9,10,11,12}, 
+							{"Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"}, 
+							null
+						)
+			
+		*/
+		(	value as any, 							// входящее значение
+			casesOrPairs as list, 					// где искать, список списков или пара списков. Можно через List.Zip словарь сделать
+			optional resultsOrDefault as any, 		// что возвращать
+			optional default as any					// если ошибка
+		) =>
+		let
+			hasPairs = List.First(casesOrPairs) is list,
+			usingPairs = 
+				let
+					targetPosition = List.PositionOf(casesOrPairs, value, Occurrence.First, (case, theValue) => theValue = case{0})
+				in
+					if targetPosition = -1 then resultsOrDefault else casesOrPairs{targetPosition}{1},
+			usingCases = 
+				let
+					cases = casesOrPairs,
+					results = resultsOrDefault
+				in
+					if List.IsEmpty(cases) or List.IsEmpty(results) 
+					then default 
+					else 	if value = List.First(cases) 
+							then List.First(results) 
+							else @fxSwitch(value, List.Skip(cases, 1), List.Skip(results, 1), default)
+		in
+			if hasPairs then usingPairs else usingCases,
+	
+	fxSwitchDAX = // замена значения в ячейке (вся ячейка). Аналог реализации SWITCH в DAX
+		/*	Описание:	замена значения в ячейке (вся ячейка). Могут быть логические переменные
+						Первый элемент списка - проверяемое значение, далее идут пары, последним все остальные значения
+			Результат:	любое значение из таблицы подстановки
+			Сайт: 		https://xxlbi.com/blog/switch-true-in-power-query/
+			Автор: 		by Daniil Maslyuk
+			Пример:	1.	= Switch({	2, 
+									1, "A", 
+									2, "B"}
+								), 						=> Result = "B"
+			
+					2.	= Switch({	"b", 
+									"a", "first", 
+									"b", "second", 
+									"c"})				=> Result = "second"
+					
+					3.	= Switch({	true, 
+									1 > 2, "first", 
+									0 = 1, "second", 
+									"other"})			=> Result = "other"
+		*/
+		[func = 
+			(input as list) as any =>
+				let
+					Source         = List.Buffer(input),
+					Expression     = List.First(Source),
+					SkipExpression = List.Skip(Source),
+					HasElse        = Number.IsEven(List.Count(Source)),
+					ElseValue      = if HasElse then List.Last(Source) else null,
+					ValuesResults  = List.RemoveLastN(SkipExpression, Number.From(HasElse)),
+					Values         = List.Alternate(ValuesResults, 1, 1, 1),
+					Results        = List.Alternate(ValuesResults, 1, 1, 0),
+					FirstResult    = List.PositionOf(Values, Expression),
+					FunctionResult = if FirstResult = -1 then ElseValue else Results{FirstResult}
+				in
+					FunctionResult,
+			
+			fnType = type function (input as list) as any
+				meta [
+					Documentation.Name = "Switch",
+					Documentation.LongDescription = "Evaluates an expression against a list of values and returns one of multiple possible result expressions.",
+					Documentation.Examples = {
+						[Description = "Simple Switch expression", Code = "Switch({2, 1, ""A"", 2, ""B""})", Result = """B"""],
+						[Description = "An equivalent of SWITCH(TRUE... in DAX", Code = "Switch({true, 1 > 2, ""A"", 1 < 2, ""B"", ""No result""})", Result = """B"""]
+					}
+				],
+			result = Value.ReplaceType(func, fnType)
+			][result],
+	
+	
+	fxSwitchLite = // надо доделать
+		(input) => 
+		let values = {	{"E", "Employee"}, 
+						{"S", "SCYC"}, 
+						{"M", "Medical"},
+						{input, "Undefined"} 
+					}, 
+			Result = List.First(List.Select(values, (x)=> x{0}=input)){1} 
+		in  Result
+],
+
+TABLE =[ // создание готовых таблиц
+	from1 = #table(type table [Product=text, Month=text, Sales=number], {} ),
+	from2 = #table({"a".."d"},List.Repeat({{1..4}},5)),
+	from3 = Table.FromList(List.Accumulate({1..6}, {}, (accum,x)=> accum & {Date.DayOfWeekName(x+1)}), null, {"ДеньНедели"}),
+	from4 = Table.FromList(Text.Split("понедельник|вторник|среда|четверг|пятница|суббота|воскресенье","|"), null, {"ДеньНедели"}),
+	from5 = // три столца. Изменять можно число строк и шаг
+		#table(type table[Date=date,Month=number,Year=number],List.Transform(List.Dates(#date(2024,1,1), 10, #duration(1,0,0,0)),(x)=>{x, Date.Month(x), Date.Year(x)})),
+	from6 = // таблица с одним столбцом со списком 12-ти месяцев (с возможностью изхменения формата)
+		Table.Combine(List.Transform({1..12}, each Table.FromValue(Date.ToText(#date(2000,_,1),"MMMM"))))
 ],
 
 libPQ = [ 
@@ -69,23 +189,24 @@ libPQ = [
 
 	TEXT =[ // текстовые функции
 		Text.Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
-		Text.AlphaNumeric = Text.Alphabet & "0123456789"
+		Text.AlphaNumeric = Text.Alphabet & "0123456789",
+		Number.Digits = {0,1,2,3,4,5,6,7,8,9}
 	],
 	
 	SMALL =[
-		Skip.AllMulti =  // отсечение строк сверху и снизу таблицы по ключевым словам - по всей таблице + мульти выбор
+		Skip.AllMulti =  		// отсечение строк сверху и снизу таблицы по ключевым словам - по всей таблице + мульти выбор
 			(x)=>(y)=>not List.ContainsAny({Text.Combine( List.Select( Record.ToList(y), (i)=>i is text))}, x, Text.Contains),
 		
-		Skip.RowsUpDown  =  // по колонке + одно слово
+		Skip.RowsUpDown  =  	// по колонке + одно слово
 			(x, txt)=>(y)=>not Text.Contains( Text.Combine( List.Select( Record.ToList(Record.SelectFields(y, txt)), (i)=>i is text)), x),
 
-		fxIsNumber = // является ли первый символ числом
+		fxIsNumber = 			// является ли первый символ числом
 			(x)=>List.ContainsAny ({ Text.Start(x,1) }, {"0".."9"}, Text.Contains),
 		
-		Type.AllColumnText = // делаем все столбцы текстовыми
+		Type.AllColumnText = 	// делаем все столбцы текстовыми
 			(tbl as table) => Table.TransformColumnTypes(tbl, List.Transform(Table.ColumnNames(tbl), (x)=>{x,type text}) ),
 
-		fxContainsKeyWord = // содержит ли таблица ключевое слово во всех столюбцах в любом месте
+		fxContainsKeyWord = 	// содержит ли таблица ключевое слово во всех столбцах в любом месте
 			(table as table, keyword as text) as logical =>
 				let f=(x)=> List.RemoveNulls(List.RemoveItems(x,{""})),
 					g=(row as list)=> List.ContainsAny(row, {keyword}, Text.Contains),
@@ -96,31 +217,42 @@ libPQ = [
 
 	//-------------------------------------------------------------------------------------
 	REORDER = [
-		Reorder.AllColumns = [
-			//  Перегруппировка всех столбцов таблицы согласно нового списка lst
-			func = 
+		Reorder.AllColumns =  	// перегруппировка всех столбцов таблицы согласно нового списка lst
+			/*  
+				Аргументы: 
+				lst 	- 	новый список расположения столбцов список. 
+							Он должен совпадать с исходным, меняеться только последовательность.
+							Если имен каких-то столбуцов в новом списке не будет или ошибка в названии, то 
+				offset 	- 	сдвиг относительно начала. 0 - без сдвига, 1 - первый столбец без изменений
+				Пример: 1. 	на входе 4 колонки abcd. На выходе колонки a и b поставит в конец
+							to = F[REORDER][Reorder.AllColumns](from,{"a","b"},2) 
+							Result: {"c", "d", "a", "b"}
+			*/
+			[func = 
 				(	tbl as table, 				//
-					lst as list,				// правильный список. Должен полностью совпадать с исходным, кроме последовательности имен столбцов
-					optional offset as number	// сдвиг относительно начала. 0 - без сдвига, 1 - первый столбец без изменений
+					lst as list,				
+					optional offset as number
 				) => 
-					Table.ReorderColumns(tbl,
+					let offset = if offset <> null then offset else 0
+					in	Table.ReorderColumns(tbl,
 						List.InsertRange(
 							List.Difference(
 								Table.ColumnNames(tbl),
-							lst),
+								lst
+							),
 						offset, lst)
 					),
 			typ = type function (tbl as table, lst as list, optional offset as number) as table 
 					meta [ 	Documentation.Name            = "Reorder.AllColumns (fxReorderAllColumns)",
 							Documentation.LongDescription = "Перегруппировка всех столбцов таблицы согласно нового списка lst.
 															 Список новых заголовков, число и названия колонок должны совпадать. <br>
-															 Пример: lst = Value.Metadata(СправочникСтолбцов)[balance][Имя]" ],
+															 Пример: lst = Value.Metadata(СправочникСтолбцов)[balance][Имя] <br>
+															 		 F[REORDER][Reorder.AllColumns](from,{""a"",""b""},2)"],
 			result = Value.ReplaceType(func,typ) 
 			][result],
 		
-		Reorder.AllColumns2 = [
-			// 	Перегруппировка всех столбцов таблицы согласно нового списка lst + сдвиг от начала
-			to = 1
+		Reorder.AllColumns2 = 	// перегруппировка всех столбцов таблицы согласно нового списка lst + сдвиг от начала
+			[ to = 1
 			]
 	],
 		
@@ -212,11 +344,65 @@ libPQ = [
 	
 	//-------------------------------------------------------------------------------------
 	REPLACE = [
+	
+		Text.ReplaceFull = // заменяет ячейку целиком на основании словаря замен. Table.ToRows или Table.ToList
+			/*
+				to = Table.TransformColumns(add, {
+						{"Область", 
+						(x)=> List.First(
+								List.Select(
+									Table.ToRows(Замена), 
+									(y)=> y{0}=x)
+								){1}, // 1 столбец в таблице замен
+						type text}
+					})
+			*/
+			(tbl as table, input) =>
+				List.First(
+					List.Select(
+						Table.ToRows(tbl), 	// переводим в список пар таблицу, состоящую из двух столбцов "Что менять" и "На что менять"
+						each _{0}=input)	// 
+				){1},						// меняем на второй столбец. Если 2, третий, если он есть
+
+
+		Text.ReplaceAll_ = 
+			/*
+			Do multiple text replacements in one function call, passing the replacements as a list of lists
+			Usage:
+				Text.ReplaceAll = Load("Text.ReplaceAll"),
+				Text.ReplaceAll("(test)", {
+					{"(", "["},
+					{")", "]"}
+				})
+			Result: "[test]"
+			*/
+			(str as text, Replacements as list) as text => 
+				List.Accumulate(Replacements, str, (s, x) => Text.Replace(s, x{0}, x{1})),
+
+        МультиЗамена = [ // Делаем множественную замену в подстроке столбца
+                dict = List.Buffer(Table.FromValue({ 
+                        {"Налог на добавленную стоимость", "НДС"},
+                        {"НДС по приобретенным товарам, работам, услугам", "НДС по приобретенным Т,Р,У"},
+                        {"Долгосрочные активы, предназначенные для реализации", "Долгосрочные активы для реализации"},
+                        {"Долгосрочные обязательства по лизинговым платежам", "Долгосрочные обязательства по лизингу"},
+                        {"Денежные средства и эквиваленты денежных средств", "Денежные средства и их эквиваленты"}, 
+                        {"кредиторская задолженность", "КЗ"},                
+                        {"Вложения в долгосрочные активы", "Вложения в ДА"},
+                        {"дебиторская задолженность", "ДЗ"} 
+                    }) [Value]),
+                func = (x)=> List.Accumulate(dict, x, (state, current) => Text.Replace(state, current{0}, current{1} )),
+                transform = Table.TransformColumns(SelectRows, {   
+                            {"Строка_ID", (x)=>x, Int64.Type}, 
+                            {"СтатьяИмя",    func, type text}, 
+                            {"СтатьяСтрока", func, type text} 
+                        })
+                ][transform],
+		
 		fxTextReplace = 
 			//
 			(dictionary as list, row) => List.Accumulate(dictionary, row, (s,c)=>Text.Replace(s,c{0},c{1})),
 	
-		fxTextReplaceList = [ // Заменяет в любом месте текста символы по списку
+		fxTextReplaceList = [ // Заменяет в текстовой строке символы по списку
 			/*  Функция : fxTextReplaceList    Отличная функция!!!
 				Описание: Заменяет в любом месте тексте символы по списку, что на что
 				Пример:  
@@ -710,6 +896,9 @@ extensionLibrary = [
 	// Switch
 	//===========================
 	Switch = 
+		/*
+
+		*/
 		Document(
 			"Switch", 
 			"Given a value, find it's paired item <br>"&
@@ -1126,6 +1315,513 @@ master =[
 
 ], // конец библиотеки master
 
+masterPQ = [ // https://github.com/camwally/Power-Query/blob/master/CreateTable2
+	// FunctionAlternatives
+	List.TransformSaveType = // сохраняет типы на выходе. Надо на примере попробовать
+		/*	Эти функции в основном представляют собой версии функций, созданных Microsoft. 
+			Однако эти функции помогают сохранить возвращаемые типы функций, которые так легко теряются. 
+			Одним из практических результатов использования этих функций в ваших запросах является то, 
+			что столбцы вашей таблицы с меньшей вероятностью изменятся на какой-либо тип 
+		*/
+		(list as list, transform as function)=>
+		let
+			listTransform = List.Transform(list, transform),
+			listType      = type {Type.FunctionReturn(Value.Type(transform))}
+		in
+			Value.ReplaceType(listTransform,listType),
+
+	//
+	ReplaceUsingTable = // 
+		(Table as table)=>
+		let 
+			Rec = Record.FromTable(Table.FromColumns(List.FirstN(Table.ToColumns(Table),2),{"Name","Value"}))
+		in 
+			(Text as text)=> if Text = null then null else Record.FieldOrDefault(Rec,Text,Text),
+	
+	// TimeZone
+	DateTimeZoneToDateTime_SwitchZone = //
+		(TimeZone as number) as function =>
+			(DateTimeZone as nullable datetimezone) as nullable datetime=>
+			let
+				SwitchedZone = DateTimeZone.SwitchZone(DateTimeZone,TimeZone),
+				DateTime 	 = DateTime.Date(SwitchedZone) & DateTime.Time(SwitchedZone)
+			in
+				if DateTimeZone is null then null else DateTime,
+
+	DateTimeZoneToDate_SwitchTimeZone = // ...…te_SwitchTimeZone
+		(TimeZone as number) as function =>
+			(DateTimeZone as nullable datetimezone) as nullable date=>
+			let
+				SwitchedZone = DateTimeZone.SwitchZone(DateTimeZone,TimeZone),
+				Date = DateTime.Date(SwitchedZone) // & DateTime.Time(DateTimeZone)
+			in
+				if DateTimeZone is null then null else Date,
+	// Table
+	Table.FromRecordOfLists = // 
+		(rec as record)=>
+		let
+			tab2col 	  = Record.ToTable(rec),
+			valuess_names = List.Reverse(Table.ToColumns(tab2col)),
+			tab 		  = Function.Invoke(Table.FromColumns, valuess_names)
+		in
+			tab,
+	
+	Table.ToRecordOfLists = //
+		(table as table, optional buffer as nullable logical)=>
+		let
+			tab 	= if buffer = true then Table.Buffer(table) else table,
+			Name 	= Table.ColumnNames(tab),
+			Value 	= Table.ToColumns(tab),
+			Record 	= Record.FromTable(Table.FromColumns({Name, Value},{"Name","Value"}))
+		in
+			Record,
+
+	Table.Create3 = // из таблицы на входе делает эту же таблицу в коде M
+		(inputTable as table, optional #"table type is vertical?" as nullable logical) as text =>
+		let
+			vert = #"table type is vertical?" ?? false,
+			source = Table.Schema(inputTable),
+			sortRows = Table.Sort(source,{{"Position", Order.Ascending}}),
+			simplifyTypeNameRec = 
+				[#"Any.Type" = "any",
+				#"Binary.Type" = "binary",
+				#"Date.Type" = "date",
+				#"DateTime.Type" = "datetime",
+				#"DateTimeZone.Type" = "datetimezone",
+				#"Duration.Type" = "duration",
+				#"Function.Type" = "function",
+				#"List.Type" = "list",
+				#"Logical.Type" = "logical",
+				#"None.Type" = "none",
+				#"Null.Type" = "null",
+				#"Number.Type" = "number",
+				#"Record.Type" = "record",
+				#"Table.Type" = "table",
+				#"Text.Type" = "text",
+				#"Time.Type" = "time",
+				#"Type.Type" = "type"],
+			simplifyTypeNames = Table.TransformColumns(sortRows,{{"TypeName", each Record.FieldOrDefault(simplifyTypeNameRec,_,_)}}),
+			selectColumns = Table.SelectColumns(simplifyTypeNames,{"Name", "TypeName","IsNullable"}),
+			addColOfTypeNames = 
+				Table.AddColumn(
+						selectColumns, 
+					"TypeNames", 
+					each 
+							Expression.Identifier([Name]) 
+							& " = " 
+							& (if [IsNullable] then "nullable " else "") 
+							& [TypeName]
+				),
+			tableTypeRec = "[" & Text.Combine(addColOfTypeNames[TypeNames], if vert then "#(lf)," else ", ") & "]",
+
+			//Code above is based on a function by Chris Webb
+
+			tableOfExpressions = Table.TransformColumns(inputTable,{},Expression.Constant),
+			listOfCols = Table.ToColumns(tableOfExpressions),
+			listOfColsOfPaddedText = 
+				List.Transform(
+						listOfCols,
+					(col as list)=>
+					let 
+							buf = List.Buffer(col),
+							maxTextLength = List.Max(List.Transform(buf,Text.Length)),
+							paddedText = List.Transform(buf,each Text.PadEnd(_,maxTextLength))
+						in
+							paddedText
+				),
+				listOfRowsOfPaddedText = List.Zip(listOfColsOfPaddedText),
+				bodyAsList = List.Transform(listOfRowsOfPaddedText, (row as list)=> "{"&Text.Combine(row,",")&"}"),
+				bodyAsText = "{"&Text.Combine(bodyAsList,"#(lf),")&"#(lf)}",
+				together =  
+						"#table(type table"
+					& (if vert then "#(lf)" else "")
+					& tableTypeRec
+					& ",#(lf)"
+					& bodyAsText
+					& ")"
+		in
+			together,
+	
+	Table.RunningTotal = // накопительный итог в новом столбце
+		(table as table, colToSum as text, colAsNew as text)=>
+		let
+			tableB 			= Table.Buffer(table),
+			listToSum 		= List.Buffer(Table.Column(tableB,colToSum)),
+			listToSumCount 	= List.Count(listToSum),
+			runningTotalB 	= 
+				List.Buffer(
+					List.Skip(
+						List.Generate(
+							()=> [item = 0, counter = 0],
+							each [counter] <= listToSumCount,
+							each [item = [item]+listToSum{[counter]}, counter = [counter]+1],
+							each [item]
+						),
+					1)
+				),
+			addIndex 		= Table.AddIndexColumn(tableB,"IndexUniqueName",0,1),
+			addRunningTotal = Table.AddColumn(addIndex,colAsNew,each runningTotalB{[IndexUniqueName]}, type number),
+			removeIndex 	= Table.RemoveColumns(addRunningTotal,{"IndexUniqueName"})
+		in
+			removeIndex,
+	
+	Table.TransformOtherColumns = // 
+		(	Table as table, 
+			ColumnsToIgnore as list, 
+			Function as function, 
+			optional TypeForColumns as nullable type
+		) as table =>
+		let
+			FunctionType 	= Value.Type(Function),
+			TypeForFunction = 
+				Type.ForFunction(
+					[ReturnType = TypeForColumns, Parameters = Type.FunctionParameters(FunctionType)],
+				Type.FunctionRequiredParameters(FunctionType)),
+		
+			FunctionWithNewReturnType = 
+				if TypeForColumns is null 
+				then Function 
+				else Value.ReplaceType(Function,TypeForFunction),  
+		
+			TransformOtherCols = 
+				Table.TransformColumns(
+					Table,
+					List.Transform(
+						ColumnsToIgnore,
+						(ColName)=> {ColName, each _}),
+				FunctionWithNewReturnType)
+		in
+			TransformOtherCols,
+
+	Table.AddRandomColumn = // создает дополнительный столбец со случайными числами
+		/*	1. 	Add column of random numbers between 0 and 1:
+				fAddRandomColumn(Source,"Random Number",0,1)
+			
+			2. 	Add column of random percentages between 0% and 100%:
+				fAddRandomColumn(Source,"Random Percentage",0,1,Percentage.Type)
+			
+			3. 	Retrieve random item from list:
+				fAddRandomColumn(Source,"Random Item",0,List.Count(ListOfItems),{each ListOfItems{Number.RoundDown(_)}, type text})
+				(ListOfItems would need to be buffered into memory for it to run quickly, e.g. ListOfItems = List.Buffer(SomeList))
+		*/
+		(Table as table, 
+			RandColName as text, 
+			Min as number, 
+			Max as number, 
+			optional TransformAndTypeCriteria as any) =>
+		let
+			List = List.Buffer( 
+					if not (TransformAndTypeCriteria is list) 
+					then {TransformAndTypeCriteria} 
+					else	if List.Count(TransformAndTypeCriteria)<=2 
+							then TransformAndTypeCriteria 
+							else error "Invalid Criteria (Too many items)"
+					),
+		
+			TransformFunc = if List{0} is null or List{0} is type 
+							then null 
+							else	if List{0} is function 
+									then List{0} 
+									else error "Invalid Criteria (Tranform)", 
+
+			ListLast = List.Last(List),
+		
+			Type = 	if	ListLast is null or ListLast is function 
+					then type number 
+					else  	if ListLast is type 
+							then ListLast 
+							else error "Invalid Criteria (Type)", 
+		
+			FirstName = Table.ColumnNames(Table){0},
+		
+			AddColumn = Table.AddColumn(Table,
+										RandColName,
+										each Number.RandomBetween(if Record.Field(_,FirstName)=null then Min else Min,Max),
+										Type),
+		
+			Transform = if TransformFunc = null 
+						then AddColumn 
+						else Table.TransformColumns(AddColumn,{RandColName, TransformFunc})
+		in
+			Transform,
+
+	Table.AddClusteredIndex = // добавляет столбец с индексом по выбранному столбцу по кластерам
+		/* to = Table.AddClusteredIndex(tbl, {"Year"}) // если годы + месяцы, то нумерует месяцы по порядку
+
+		*/
+		(Table as table, GroupOnCols as list) => 
+		let
+			Group   = Table.Group(Table, GroupOnCols, {"ColumnOfTables", each Table.AddIndexColumn(_, "ClustIndex", 0, 1)} ),
+			Combine = Table.Combine(Group[ColumnOfTables])
+		in
+			Combine,
+	
+	Table.CombineJoins = // объединяет столбцы
+		(	LeftTable as table,  LeftKey as list, 
+			RightTable as table, RightKey as list, 
+			ListOfJoins as list) =>
+		let
+			Func 		 = each Table.NestedJoin(LeftTable, LeftKey, RightTable, RightKey,"Right",_), 
+			ListOfTables = List.Transform(ListOfJoins, Func),
+			Combine 	 = Table.Combine(ListOfTables)
+		in
+			Combine,
+
+	Table.CombineJoinsExpandCoalesce = 
+		/* 
+		Similar to combine joins, but also: 
+			1) Preserves the order
+			2) Expands right hand side table
+			3) Right key is transferred to left key when left key is null, right key is then deleted 
+		*/
+
+		(	LeftTable as table, LeftKeys as list, 
+			RightTable as table ,RightKeys as list,
+			ListOfJoins as list
+		) =>
+		let
+			Func = each Table.NestedJoin(LeftTable, LeftKeys, RightTable, RightKeys,"Right",_), 
+			ListOfTables 	 = List.Transform(ListOfJoins, Func),
+			Combine 		 = Table.Combine(ListOfTables),
+			OldRightColNames = List.Buffer(Table.ColumnNames(RightTable)),
+			NewRightKeys 	 = List.Buffer(List.Transform(RightKeys, each "Right." & _)),
+			NewRightColNames = List.ReplaceMatchingItems(OldRightColNames,List.Zip({RightKeys,NewRightKeys})),
+			//Below: Using Table.Buffer, so that order is preserved on expand
+			ExpandRight 	 = Table.ExpandTableColumn(Table.Buffer(Combine), "Right", OldRightColNames, NewRightColNames),
+			Coalesce = 
+				List.Accumulate(
+					List.Zip({LeftKeys,NewRightKeys}),
+					ExpandRight, 
+					(Table, Keys) =>Table.ReplaceValue(Table, null, each Record.Field(_,Keys{1}), Replacer.ReplaceValue, {Keys{0}})
+				),
+			
+			RemoveRightKeys 	 = Table.RemoveColumns(Coalesce,NewRightKeys),
+			OriginalLeftKeyTypes = List.Transform(LeftKeys, each Type.TableColumn(Value.Type(LeftTable),_)),
+			ChangeTypes 		 = Table.TransformColumnTypes(RemoveRightKeys,List.Zip({LeftKeys, OriginalLeftKeyTypes}))
+		in
+			ChangeTypes,
+
+	Table.NonAggPivotMultRows = // супер. Прокачанный вариант Сведено. Переворачивает строки в столбцы 
+		/*	https://www.dingbatdata.com/non-aggregate-pivot-with-multiple-rows-in-powerquery/
+			to = PivotMultRows(FlatTable, "Vehicle", "Person")
+		*/
+		(Source as table,
+		ColToPivot as text,
+		ColForValues as text)=> 
+
+		let
+			PivotColNames 	  = List.Buffer(List.Distinct(Table.Column(Source,ColToPivot))), 
+			#"Pivoted Column" = Table.Pivot(Source, PivotColNames, ColToPivot, ColForValues, each _),
+
+			TableFromRecordOfLists = (rec as record, fieldnames as list) =>
+				let
+					PartialRecord = Record.SelectFields(rec,fieldnames),
+					RecordToList = Record.ToList(PartialRecord),
+					Table = Table.FromColumns(RecordToList,fieldnames)
+				in
+					Table,
+
+			#"Added Custom" = Table.AddColumn(#"Pivoted Column", "Values", each TableFromRecordOfLists(_,PivotColNames)),
+			#"Removed Other Columns" = Table.RemoveColumns(#"Added Custom",PivotColNames),
+			#"Expanded Values" = Table.ExpandTableColumn(#"Removed Other Columns", "Values", PivotColNames)
+		in
+			#"Expanded Values",
+
+	Table.NonAggPivotMultRows2 = // прокачанный вариант Сведено не проверял
+		/*
+
+		*/
+		(	Source as table,
+			PivotCol as text,
+			ValueCol as text
+		)=> 
+		let
+			Source = Table.Buffer(Source), //As source table is referenced 3 times
+			GroupClustIndex = 
+				Table.Group(Source,
+					List.RemoveItems(Table.ColumnNames(Source),{ValueCol}),
+					{"ColOfTables", each Table.AddIndexColumn(_,"idx")}
+				),
+
+			CombineTables = Table.Combine(GroupClustIndex[ColOfTables]),
+			Pivot 		  = Table.Pivot(CombineTables, List.Distinct(Table.Column(Source,PivotCol)), PivotCol, ValueCol),
+			RemoveIndex   = Table.RemoveColumns(Pivot,{"idx"})
+		in
+			RemoveIndex,
+
+	Table.OrderFirstOccurrence = // группировка множественных вхождений элементов массива, упорядоченных по первому вхождению
+		/*	Учитывая несортированный массив с повторениями, задача состоит в том, чтобы сгруппировать 
+			многократное вхождение отдельных элементов. Группировка должна происходить таким образом, 
+			чтобы сохраняться порядок первого появления всех элементов.
+		
+			Orders table by grouping on a column(s).
+			The result is that you order by first occurence.
+			https://www.geeksforgeeks.org/group-multiple-occurrence-of-array-elements-ordered-by-first-occurrence 
+		*/ 
+		(Source as table, GroupBy as list) =>
+		let
+			#"Grouped Rows" 	= Table.Group(Source, GroupBy, {{"Tables", each _, type table}}),
+			#"Removed Columns" 	= Table.RemoveColumns(#"Grouped Rows", GroupBy),
+			#"Expanded Tables" 	= Table.ExpandTableColumn(#"Removed Columns", "Tables", Table.ColumnNames(Source)),
+			RevertTypes 		= Value.ReplaceType(#"Expanded Tables", Value.Type(Source))
+		in
+			RevertTypes,
+	
+	Table.StableSortAndOrderFirstOccurrence = // 
+		/*
+			It's a bit like Table.Sort, but:
+			1) Sorts are stable
+			2) If you neglect to put a Order.Ascending or a Order.Descending then ordered by first occurrence 
+		*/
+		(Table as table, List as list) =>
+		let
+			fMakeEfficientList = (List as list) =>
+				let 
+					ColName 	= List.Transform(List, each _{0}),
+					Order 		= List.Transform(List, each _{1}?),
+					TableForm 	= Table.FromColumns({ColName,Order},{"ColName","Order"}),
+					Comparer 	= (a as record, b as record) => Number.From(a[Order] is null or b[Order] is null) ,
+					PartionedTable = Table.Group(TableForm, {"Order"}, {{"NestedLists", each Table.ToRows(_), type list}},GroupKind.Local, Comparer),
+					PartionedList  = PartionedTable[NestedLists]
+				in
+					PartionedList,
+
+			fReorder = (Table as table, List as list) =>
+				let
+					ListItem = List.Buffer(List{0}),
+					ListItemColNames = List.Buffer(List.Zip(ListItem){0}),
+					GroupedTable = Table.Group(Table, ListItemColNames, {{"NestedTables", each Table.RemoveColumns(_,ListItemColNames), type table}}),
+					SortedTable  = if ListItem{0}{1} = null then GroupedTable else Table.Sort(GroupedTable,ListItem),
+					fRecursion 	 = each if List.Count(List) > 1 then @fReorder(_, List.Skip(List)) else _,
+					RecurseOnNestedTables = Table.Buffer(Table.TransformColumns(SortedTable, {"NestedTables", fRecursion})),
+					Expand = Table.ExpandTableColumn(RecurseOnNestedTables, "NestedTables", Table.ColumnNames(RecurseOnNestedTables[NestedTables]{0}))
+				in
+					Expand,
+			
+			EfficientList 	= List.Buffer(fMakeEfficientList(List)),
+			ReorderRows 	= fReorder(Table,EfficientList),
+			ReclaimColOrder = Table.ReorderColumns(ReorderRows,Table.ColumnNames(Table)),
+			ReclaimColTypes = Value.ReplaceType(ReclaimColOrder,Value.Type(Table))
+		in
+			ReclaimColTypes,
+	
+	Table.SyncTableTypeOfCol = // приписывает тип таблицы столбцу на основе первой таблицы в столбце
+		/*
+			Приписывает тип таблицы столбцу на основе первой таблицы в столбце как
+			Table.TransformColumnTypes не работает со сложными типами
+			
+			https://social.technet.microsoft.com/Forums/en-US/636e9b44-6820-4ff2-ab60-5dd6a5307bd2/type-conversion-mysteries
+		*/
+		(PreviousStep as table,ColName as text) =>
+			Table.TransformColumns(
+				PreviousStep, 
+				{ColName, each {_}{0}, Value.Type(Table.Column(PreviousStep,ColName){0})}
+			),
+	
+	Table.SelectRowsWeb = // не пробовал применить
+		/*
+
+		*/
+		
+		(	Table as table,
+			fnFilter as function,
+			optional Range as nullable list,
+			optional Horizontal as nullable logical)=>
+
+		let
+			Range      	= if Range      = null then {0}   else Range,
+			Horizontal 	= if Horizontal = null then false else Horizontal,
+			AddIndex 	= Table.AddIndexColumn(Table, "Index", 0, 1),
+			Filter 		= Table.SelectRows(AddIndex, fnFilter),
+			Positions 	= List.Buffer(Filter[Index]),
+			Values 		= List.Buffer(Table[Column1]),
+			
+			ListOfTables = 
+				List.Transform(Positions, (Pos)=>  
+					let  
+						Len = List.Count(Range),
+						Gen = List.Generate(()=>[i= 0      , Rng = Range{i}, Position = Pos+Rng,  Value = Values{Position}],
+											each _[i] < Len,
+											each [i= _[i]+1, Rng = Range{i}, Position = Pos+Rng,  Value = Values{Position}],
+											each _[[Value],[Rng],[Position]]),
+						
+						Table = Table.FromRecords(Gen),
+						RenameAndChangeTypes = Value.ReplaceType(Table, type table[Value = text, Range = Int64.Type, Position = Int64.Type])
+					in
+						RenameAndChangeTypes),
+			
+			Combine 	 = Table.Combine(ListOfTables),
+			ValuesToRows = Table.FromRows(List.Transform(ListOfTables, each _[Value]))
+		in
+			if Horizontal then ValuesToRows else Combine,
+	
+	Table.TakeTypesAndTryApply = // приписывает типы из одной таблицы и применяет их к одноименным столбцам в другой таблице
+		/*
+			
+		*/
+		(tblToAlter as table, tblGet as table) =>
+			let
+				typetblGet  = Value.Type(tblGet),
+				NameCols 	= List.Intersect({Table.ColumnNames(tblGet), Table.ColumnNames(tblToAlter)}),
+				NameFuncTypes = 
+					List.Transform(
+						NameCols, 
+						(x) => {x, 
+								each {_}{0}, 
+								Type.TableColumn(typetblGet, x)}
+					),
+				Transform = Table.TransformColumns(tblToAlter, NameFuncTypes)
+			in
+				Transform,
+	
+	Table.SplitColsDateTime = // наверное правильно соединяет столбцы с датой и временем
+		/*
+		
+		*/
+		(	table as table,
+			ColName as any, // Can be as list of column names or a single column name 
+			optional ColNameDate as nullable text,
+			optional ColNameTime as nullable text,
+			optional Delimiter   as nullable text
+		) as table=> 
+		let
+			ColNameDateD  = if ColNameDate is null then "Date" else ColNameDate, // Default values can be changed to fit  
+			ColNameTimeD  = if ColNameTime is null then "Time" else ColNameTime, // your own language or table naming standards
+			DelimiterD    = if Delimiter   is null then "."    else Delimiter,   // (only applicable when ColName is list)
+			ColNameIsText = if ColName is text then true else
+							if ColName is list then false else
+							error "ColName needs to be a text value or a list of text values", 
+			fnSplitColumn = 
+				(State as table, CurrentColName as text) as table=>
+					let
+						CurrentColNamesNew = 
+							if ColNameIsText 
+							then {ColNameDateD, ColNameTimeD}
+							else {CurrentColName & DelimiterD & ColNameDateD, CurrentColName & DelimiterD & ColNameTimeD},
+
+						SplitColumn =  Table.SplitColumn(State, CurrentColName, each {_,_}, CurrentColNamesNew),
+						
+						ColumnTransType = {
+							{DateTime.Date, type nullable date},
+							{DateTime.Time, type nullable time}
+						}, 
+						
+						TransformColumns = 
+							Table.TransformColumns(
+								SplitColumn,
+								List.Zip({CurrentColNamesNew} & List.Zip(ColumnTransType))
+							)
+					in
+						TransformColumns
+		in
+			List.Accumulate(
+				if ColNameIsText then {ColName} else ColName,
+				table,
+				fnSplitColumn
+			)
+
+],
+
 buch = [
     readme="Небольшая библиотека для получения данных из файлов пакета MS Office. Пользуйтесь! @buchlotnik",
     fxUnzip = 
@@ -1287,6 +1983,7 @@ buch = [
 		libPQ & 
 		extensionLibrary & 
 		master &
-		buch
+		buch &
+		TABLE
  in 
  	result 
